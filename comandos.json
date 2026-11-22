@@ -1,0 +1,11 @@
+{
+  "escenas": [
+    { "n": 1, "id": "apagado", "cmd": "e1", "nombre": "Apagado" },
+    { "n": 2, "id": "blanco", "cmd": "e2", "nombre": "Blanco pleno" },
+    { "n": 3, "id": "pulso", "cmd": "e3", "nombre": "Pulso rosa" },
+    { "n": 4, "id": "colores", "cmd": "e4", "nombre": "Colores FAA al pulso" },
+    { "n": 5, "id": "destellos", "cmd": "e5", "nombre": "Destellos" },
+    { "n": 6, "id": "chispas", "cmd": "e6", "nombre": "Chispas" },
+    { "n": 7, "id": "veintiseis", "cmd": "e7", "nombre": "26" }
+  ]
+}

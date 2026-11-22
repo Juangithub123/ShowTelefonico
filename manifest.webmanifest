@@ -1,0 +1,10 @@
+{
+  "name": "Luces FAA! 2026",
+  "short_name": "Luces FAA!",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [{ "src": "icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Emisor · Luces FAA! 2026</title>
+<meta name="robots" content="noindex">
+<style>
+*{box-sizing:border-box;margin:0}
+body{background:#10130D;color:#ECEEE5;font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:18px max(16px,env(safe-area-inset-left)) 40px}
+h1{font:900 24px system-ui;margin-bottom:4px}
+h1 em{font-style:normal;color:#FF2E6A}
+p{color:#A6AD9B;font-size:14.5px;max-width:640px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:16px 0}
+.seg button,.scene{border:1px solid #2F3529;background:#191D15;color:#ECEEE5;border-radius:12px;padding:10px 14px;font:700 15px system-ui}
+.seg button[aria-pressed="true"]{border-color:#FF2E6A;background:#3A1420}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-width:720px}
+.scene{padding:18px 12px;text-align:left;display:grid;gap:4px}
+.scene b{font-size:13px;color:#A6AD9B}
+.scene.on{border-color:#93CC6E;background:#25331C}
+label{font-size:14px;color:#A6AD9B}
+a{color:#93CC6E}
+ul{margin:8px 0 0 20px;color:#A6AD9B;font-size:14px}
+</style>
+</head>
+<body>
+<h1>Emisor · Luces <em>FAA!</em></h1>
+<p>Cada botón suena un comando de ~1,3 s. Los teléfonos cambian de escena cuando el sonido <b>termina</b>: para que caiga justo en un golpe de la música, disparalo 1,3 s antes. Conectá esta compu o teléfono a la consola, o usá los WAV desde Arena o TD.</p>
+<div class="row seg" id="mode">
+  <button type="button" data-m="audible" aria-pressed="true">Audible</button>
+  <button type="button" data-m="ultrasonido" aria-pressed="false">Ultrasonido</button>
+  <label>Volumen <input id="vol" type="range" min="5" max="100" value="50"></label>
+</div>
+<div class="grid" id="grid"></div>
+<p style="margin-top:22px"><b>WAV para Arena o TD</b> (48 kHz, mono):</p>
+<ul id="wavs"></ul>
+<script src="vendor/ggwave.js"></script>
+<script src="emisor.js?v=1"></script>
+</body>
+</html>
