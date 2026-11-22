@@ -16,6 +16,7 @@ Show de luces en los teléfonos del público, sin app y sin red durante el show.
 | `wav/audible/`, `wav/ultrasonido/` | Cada escena con los valores por defecto como WAV (48 kHz, mono), para Arena o TouchDesigner |
 | `comandos.json` | La lista de escenas y sus comandos |
 | `tools/generar-wav.js` | Regenera los WAV y comprueba que cada uno se decodifique (`node tools/generar-wav.js`) |
+| `captura.js`, `decodificador.js` | El micrófono se junta en el hilo de audio (AudioWorklet) y se decodifica en un Web Worker, así la pantalla no se traba |
 | `vendor/ggwave.js` | ggwave 0.4.0 (licencia MIT), en un solo archivo |
 | `sw.js` | Guarda la página para usarla sin señal. Al cambiar archivos, subir `VERSION` |
 

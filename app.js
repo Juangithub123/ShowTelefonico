@@ -104,7 +104,8 @@
 
   function frame() {
     requestAnimationFrame(frame);
-    var w = innerWidth, h = innerHeight;
+    /* media resolución: para colores planos alcanza y se dibujan 4 veces menos píxeles */
+    var w = Math.ceil(innerWidth / 2), h = Math.ceil(innerHeight / 2);
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     SCENES[st.e].f(performance.now() - t0);
   }
@@ -113,33 +114,41 @@
   var dimT = 0;
   function showStatus() { $('status').classList.remove('dim'); clearTimeout(dimT); dimT = setTimeout(function () { $('status').classList.add('dim'); }, 4000); }
 
-  /* ---------- Escucha: micrófono sin procesar → ggwave ---------- */
-  var actx, gg, inst;
+  /* ---------- Escucha: micrófono sin procesar → decodificador en un proceso aparte ---------- */
+  /* El audio no pasa por el hilo de la pantalla: un AudioWorklet lo junta en el hilo de audio y lo manda
+     directo a un Web Worker que corre ggwave. Si el navegador no tiene AudioWorklet, se usa el método viejo,
+     pero igual la decodificación queda en el Worker. */
+  var actx, worker;
   function listen() {
     /* a 48 kHz: ggwave decodifica mal si le llega audio a otra frecuencia (medido: 0/7 audibles a 44,1 kHz);
        así el navegador convierte el micrófono a 48 kHz antes de pasárselo */
     var AC = window.AudioContext || window.webkitAudioContext;
     try { actx = new AC({ sampleRate: 48000 }); } catch (e) { actx = new AC(); }
+    worker = new Worker('decodificador.js?v=1');
+    worker.onmessage = function (e) {
+      if (e.data.cmd) { onCommand(e.data.cmd); }
+      if (e.data.lv !== undefined) { $('dot').style.setProperty('--lv', String(1 + Math.min(1, e.data.lv * 4))); }
+    };
     return navigator.mediaDevices.getUserMedia({
       /* sin cancelación de eco, supresión de ruido ni ganancia automática: si no, el teléfono borra las señales */
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false
     }).then(function (stream) {
-      return ggwave_factory().then(function (g) {
-        gg = g; gg.disableLog();
-        var p = gg.getDefaultParameters(); p.sampleRateInp = actx.sampleRate; p.sampleRateOut = actx.sampleRate;
-        inst = gg.init(p);
-        var src = actx.createMediaStreamSource(stream), proc = actx.createScriptProcessor(1024, 1, 1), mute = actx.createGain();
-        mute.gain.value = 0;
-        proc.onaudioprocess = function (e) {
-          var data = e.inputBuffer.getChannelData(0), lv = 0;
-          for (var i = 0; i < data.length; i += 16) { lv = Math.max(lv, Math.abs(data[i])); }
-          $('dot').style.setProperty('--lv', String(1 + Math.min(1, lv * 4)));
-          var r = gg.decode(inst, new Int8Array(new Float32Array(data).buffer));
-          if (r && r.length) { onCommand(String.fromCharCode.apply(null, Array.from(r))); } /* copiar ya: apunta a memoria de ggwave */
-        };
-        src.connect(proc); proc.connect(mute); mute.connect(actx.destination);
-        if (actx.state === 'suspended') { actx.resume(); }
-      });
+      var src = actx.createMediaStreamSource(stream), mute = actx.createGain();
+      mute.gain.value = 0; mute.connect(actx.destination);
+      if (actx.audioWorklet && window.AudioWorkletNode) {
+        return actx.audioWorklet.addModule('captura.js?v=1').then(function () {
+          var node = new AudioWorkletNode(actx, 'captura'), ch = new MessageChannel();
+          node.port.postMessage({ port: ch.port1 }, [ch.port1]);
+          worker.postMessage({ init: true, rate: actx.sampleRate, port: ch.port2 }, [ch.port2]);
+          src.connect(node); node.connect(mute);
+          if (actx.state === 'suspended') { actx.resume(); }
+        });
+      }
+      var proc = actx.createScriptProcessor(1024, 1, 1);
+      worker.postMessage({ init: true, rate: actx.sampleRate });
+      proc.onaudioprocess = function (e) { var f = new Float32Array(e.inputBuffer.getChannelData(0)); worker.postMessage({ audio: f }, [f.buffer]); };
+      src.connect(proc); proc.connect(mute);
+      if (actx.state === 'suspended') { actx.resume(); }
     });
   }
 
