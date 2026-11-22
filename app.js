@@ -10,6 +10,10 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var cv = $('cv'), ctx = cv.getContext('2d');
+  /* modos de prueba por la dirección: ?diag muestra números, ?css pinta con el fondo de la página en vez del lienzo,
+     ?nomic arranca sin micrófono */
+  var Q = location.search, DIAG = /diag/.test(Q), CSS = /css/.test(Q), NOMIC = /nomic/.test(Q);
+  var diag = { frames: 0, drawMs: 0, maxMs: 0, t: performance.now(), blocks: 0, decMs: 0, path: NOMIC ? 'sin micrófono' : '—' };
 
   /* colores: 0 = paleta FAA! completa; 9 = uno al azar por teléfono */
   var ROSA = '#FF2E6A', VIOLETA = '#8E24D9', VERDE = '#93CC6E', DORADO = '#F4C95C', TURQUESA = '#8FBABA';
@@ -30,9 +34,21 @@
   }
   /* pinta todo con un color y una intensidad 0-1 (sobre negro) */
   function fill(c, a) {
+    if (CSS) { cssFill(c, a); return; }
     ctx.globalAlpha = 1; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
     if (!c || a <= 0) { return; }
     ctx.globalAlpha = Math.min(1, a) * (0.1 + 0.1 * st.i); ctx.fillStyle = c; ctx.fillRect(0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
+  }
+  /* modo ?css: el color va al fondo de la página (el lienzo queda transparente) */
+  var lastCss = '';
+  function hexA(c, a) {
+    if (!c) { return '#000'; }
+    if (c.charAt(0) === '#') { var n = parseInt(c.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a.toFixed(3) + ')'; }
+    return c.replace('hsl(', 'hsla(').replace(')', ',' + a.toFixed(3) + ')');
+  }
+  function cssFill(c, a) {
+    var v = !c || a <= 0 ? '#000' : hexA(c, Math.min(1, a) * (0.1 + 0.1 * st.i));
+    if (v !== lastCss) { document.body.style.background = 'linear-gradient(' + v + ',' + v + '),#000'; lastCss = v; }
   }
   /* destellos: nunca más de 3 por segundo (límite recomendado por fotosensibilidad) */
   function safe(ms) { return Math.max(ms, 1000 / 3); }
@@ -104,10 +120,21 @@
 
   function frame() {
     requestAnimationFrame(frame);
+    var tf = performance.now();
     /* media resolución: para colores planos alcanza y se dibujan 4 veces menos píxeles */
     var w = Math.ceil(innerWidth / 2), h = Math.ceil(innerHeight / 2);
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    if (CSS) { ctx.clearRect(0, 0, cv.width, cv.height); }
     SCENES[st.e].f(performance.now() - t0);
+    if (DIAG) {
+      var dt = performance.now() - tf; diag.frames++; diag.drawMs += dt; diag.maxMs = Math.max(diag.maxMs, dt);
+      if (tf - diag.t >= 1000) {
+        $('diag').textContent = Math.round(diag.frames * 1000 / (tf - diag.t)) + ' fps · cuadro ' + (diag.drawMs / diag.frames).toFixed(1) + ' ms (máx ' + diag.maxMs.toFixed(1) + ')' +
+          ' · audio ' + diag.blocks + ' bloques/s, decodificar ' + diag.decMs.toFixed(2) + ' ms · ' + (actx ? actx.sampleRate + ' Hz' : '') + ' · ' + diag.path + ' · ' + (CSS ? 'css' : 'lienzo') +
+          ' · ' + innerWidth + '×' + innerHeight + ' @' + devicePixelRatio;
+        diag.frames = 0; diag.drawMs = 0; diag.maxMs = 0; diag.t = tf;
+      }
+    }
   }
 
   /* ---------- Estado: se ve un momento al entrar o al cambiar de escena, después se apaga ---------- */
@@ -124,9 +151,10 @@
        así el navegador convierte el micrófono a 48 kHz antes de pasárselo */
     var AC = window.AudioContext || window.webkitAudioContext;
     try { actx = new AC({ sampleRate: 48000 }); } catch (e) { actx = new AC(); }
-    worker = new Worker('decodificador.js?v=1');
+    worker = new Worker('decodificador.js?v=2');
     worker.onmessage = function (e) {
       if (e.data.cmd) { onCommand(e.data.cmd); }
+      if (e.data.diag) { diag.blocks = e.data.diag.blocks; diag.decMs = e.data.diag.ms; }
       if (e.data.lv !== undefined) { $('dot').style.setProperty('--lv', String(1 + Math.min(1, e.data.lv * 4))); }
     };
     return navigator.mediaDevices.getUserMedia({
@@ -140,14 +168,14 @@
           var node = new AudioWorkletNode(actx, 'captura'), ch = new MessageChannel();
           node.port.postMessage({ port: ch.port1 }, [ch.port1]);
           worker.postMessage({ init: true, rate: actx.sampleRate, port: ch.port2 }, [ch.port2]);
-          src.connect(node); node.connect(mute);
+          src.connect(node); node.connect(mute); diag.path = 'worklet';
           if (actx.state === 'suspended') { actx.resume(); }
         });
       }
       var proc = actx.createScriptProcessor(1024, 1, 1);
       worker.postMessage({ init: true, rate: actx.sampleRate });
       proc.onaudioprocess = function (e) { var f = new Float32Array(e.inputBuffer.getChannelData(0)); worker.postMessage({ audio: f }, [f.buffer]); };
-      src.connect(proc); proc.connect(mute);
+      src.connect(proc); proc.connect(mute); diag.path = 'script';
       if (actx.state === 'suspended') { actx.resume(); }
     });
   }
@@ -178,7 +206,7 @@
     keepAwake();
     var de = document.documentElement;
     if (de.requestFullscreen) { de.requestFullscreen().catch(function () {}); }
-    listen().then(function () {
+    (NOMIC ? Promise.resolve() : listen()).then(function () {
       $('ov').hidden = true; apply({ e: 1, bpm: 120, c: 0, p: 0, i: 9 }); $('stxt').textContent = 'Escuchando…'; showStatus();
     }).catch(function () {
       b.disabled = false; b.textContent = 'Probar de nuevo';
@@ -201,5 +229,7 @@
   /* guardar la página para usarla sin señal */
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(function () {}); }
 
+  if (DIAG) { $('diag').hidden = false; }
+  if (CSS) { cv.style.background = 'transparent'; }
   frame();
 })();

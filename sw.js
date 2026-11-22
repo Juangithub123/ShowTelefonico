@@ -1,7 +1,7 @@
 /* Guarda la página del público para que funcione sin señal durante el show.
    Al cambiar archivos de la página, subir VERSION. */
-var VERSION = 'luces-faa-3';
-var SHELL = ['./', 'index.html', 'app.js?v=3', 'decodificador.js?v=1', 'captura.js?v=1', 'vendor/ggwave.js', 'manifest.webmanifest', 'icono.svg'];
+var VERSION = 'luces-faa-4';
+var SHELL = ['./', 'index.html', 'app.js?v=4', 'decodificador.js?v=2', 'captura.js?v=1', 'vendor/ggwave.js', 'manifest.webmanifest', 'icono.svg'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
