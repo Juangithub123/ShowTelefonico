@@ -39,13 +39,16 @@ factory().then(function (gg) {
   Object.keys(modos).forEach(function (modo) {
     fs.mkdirSync(path.join(__dirname, '..', 'wav', modo), { recursive: true });
     COMANDOS.escenas.forEach(function (e) {
+      /* cada escena con los valores por defecto: ETCPI */
+      const d = COMANDOS.defecto;
+      e.cmd = String(e.n) + ((d.bpm - 60) / 4).toString(36) + d.color + d.patron + d.intensidad;
       const raw = gg.encode(inst, e.cmd, modos[modo], 50);
       const f = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
       /* comprobación: se decodifica como llegaría a un micrófono (en trozos, con silencio antes y después) */
       const ok = check(gg, f, e.cmd);
       const name = e.n + '-' + e.id + '.wav';
       fs.writeFileSync(path.join(__dirname, '..', 'wav', modo, name), wav(f, RATE));
-      log(modo.padEnd(12), name.padEnd(22), (f.length / RATE).toFixed(2) + ' s', ok ? 'ok' : 'NO DECODIFICA');
+      log(modo.padEnd(12), name.padEnd(22), e.cmd, (f.length / RATE).toFixed(2) + ' s', ok ? 'ok' : 'NO DECODIFICA');
     });
   });
 });
