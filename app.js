@@ -9,7 +9,7 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var cv = $('cv'), ctx = cv.getContext('2d');
+  var cv = $('cv');
   /* modos de prueba por la dirección: ?diag muestra números, ?css pinta con el fondo de la página en vez del lienzo,
      ?nomic arranca sin micrófono */
   var Q = location.search, DIAG = /diag/.test(Q), CSS = /css/.test(Q), NOMIC = /nomic/.test(Q);
@@ -32,24 +32,54 @@
     if (st.c === 9) { return PALETA[Math.floor(rnd(k || 0) * PALETA.length)]; }
     return COLORES[st.c];
   }
+  /* ---------- Dibujo ----------
+     Las escenas son colores planos: cada cuadro se calcula un solo color y se pinta toda la pantalla de una vez.
+     Con WebGL eso es una sola orden a la placa de video (gl.clear) sobre un lienzo de 4×4 píxeles estirado:
+     mucho más liviano que dibujar con el lienzo 2D, que en Firefox para Android iba a ~25 fps.
+     Respaldo: lienzo 2D (si no hay WebGL) o el fondo de la página (?css). El 26 es texto HTML encima. */
+  var gl = null, c2d = null;
+  if (!CSS) {
+    try { gl = cv.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'low-power' }); } catch (e) { gl = null; }
+    if (!gl) { c2d = cv.getContext('2d'); }
+  }
+  cv.width = 4; cv.height = 4;
+  var RENDER = gl ? 'webgl' : c2d ? 'lienzo 2D' : 'css';
+  var out = [0, 0, 0], rgbCache = {};
+  function rgb(c) {
+    var v = rgbCache[c];
+    if (v) { return v; }
+    if (c.charAt(0) === '#') { var n = parseInt(c.slice(1), 16); v = [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
+    else {
+      var m = /hsl\((\d+),(\d+)%,(\d+)%\)/.exec(c), h = +m[1] / 360, sa = +m[2] / 100, l = +m[3] / 100;
+      var q = l < 0.5 ? l * (1 + sa) : l + sa - l * sa, pp = 2 * l - q;
+      var hue = function (t) { t = frac(t); return t < 1 / 6 ? pp + (q - pp) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? pp + (q - pp) * (2 / 3 - t) * 6 : pp; };
+      v = [hue(h + 1 / 3), hue(h), hue(h - 1 / 3)];
+    }
+    if (c.charAt(0) === '#') { rgbCache[c] = v; }
+    return v;
+  }
   /* pinta todo con un color y una intensidad 0-1 (sobre negro) */
-  function fill(c, a) {
-    if (CSS) { cssFill(c, a); return; }
-    ctx.globalAlpha = 1; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+  function fill(c, a) { out = [0, 0, 0]; layer(c, a); }
+  /* una capa encima de lo que ya hay (para los fundidos) */
+  function layer(c, a) {
     if (!c || a <= 0) { return; }
-    ctx.globalAlpha = Math.min(1, a) * (0.1 + 0.1 * st.i); ctx.fillStyle = c; ctx.fillRect(0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
+    var k = Math.min(1, a) * (0.1 + 0.1 * st.i), v = rgb(c);
+    out = [out[0] + (v[0] - out[0]) * k, out[1] + (v[1] - out[1]) * k, out[2] + (v[2] - out[2]) * k];
   }
-  /* modo ?css: el color va al fondo de la página (el lienzo queda transparente) */
   var lastCss = '';
-  function hexA(c, a) {
-    if (!c) { return '#000'; }
-    if (c.charAt(0) === '#') { var n = parseInt(c.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a.toFixed(3) + ')'; }
-    return c.replace('hsl(', 'hsla(').replace(')', ',' + a.toFixed(3) + ')');
+  function present() {
+    if (gl) { gl.clearColor(out[0], out[1], out[2], 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
+    var css = 'rgb(' + Math.round(out[0] * 255) + ',' + Math.round(out[1] * 255) + ',' + Math.round(out[2] * 255) + ')';
+    if (c2d) { c2d.fillStyle = css; c2d.fillRect(0, 0, 4, 4); return; }
+    if (css !== lastCss) { document.body.style.background = css; lastCss = css; }
   }
-  function cssFill(c, a) {
-    var v = !c || a <= 0 ? '#000' : hexA(c, Math.min(1, a) * (0.1 + 0.1 * st.i));
-    if (v !== lastCss) { document.body.style.background = 'linear-gradient(' + v + ',' + v + '),#000'; lastCss = v; }
+  /* el 26: texto HTML encima del color, que el navegador compone con la placa de video */
+  var n26 = $('n26'), n26On = false;
+  function show26(c, a, scale) {
+    if (!c) { if (n26On) { n26.style.opacity = '0'; n26On = false; } return; }
+    n26On = true; n26.style.color = c; n26.style.opacity = String(Math.min(1, a) * (0.1 + 0.1 * st.i)); n26.style.transform = 'translate(-50%,-50%) scale(' + scale.toFixed(3) + ')';
   }
+
   /* destellos: nunca más de 3 por segundo (límite recomendado por fotosensibilidad) */
   function safe(ms) { return Math.max(ms, 1000 / 3); }
 
@@ -75,7 +105,7 @@
       if (st.p === 1) { fill(color(Math.floor(t / (b * 4))), 1); }    /* cambia por compás */
       else if (st.p === 2) {                                         /* fundido continuo entre colores */
         var x = t / (b * 2), i = Math.floor(x);
-        fill(color(i), 1); ctx.globalAlpha = frac(x) * (0.1 + 0.1 * st.i); ctx.fillStyle = color(i + 1); ctx.fillRect(0, 0, cv.width, cv.height); ctx.globalAlpha = 1;
+        fill(color(i), 1); layer(color(i + 1), frac(x));
       } else if (st.p === 3) { var nn = Math.floor(t / b); fill(PALETA[Math.floor(rnd(nn) * PALETA.length)], 1); } /* al azar por teléfono */
       else { fill(color(Math.floor(t / b)), 1); }                      /* cambia por tiempo */
     } },
@@ -91,13 +121,8 @@
     7: { nombre: '26', f: function (t) {
       var b = beat(), n = Math.floor(t / b), ph = (t % b) / b, s = 1 + 0.06 * Math.pow(1 - ph, 3);
       fill(null, 0);
-      if (st.p === 2 && (t % safe(b)) > safe(b) / 2) { return; }    /* 2: parpadea */
-      var w = cv.width, h = cv.height, size = Math.min(w * 0.62, h * 0.5) * s;
-      ctx.globalAlpha = 0.1 + 0.1 * st.i;
-      ctx.fillStyle = st.p === 1 ? color(n) : color(0) || ROSA;       /* 1: cambia de color por tiempo */
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.font = '900 ' + Math.round(size) + 'px system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
-      ctx.fillText('26', w / 2, h / 2); ctx.globalAlpha = 1;
+      if (st.p === 2 && (t % safe(b)) > safe(b) / 2) { show26(null); return; } /* 2: parpadea */
+      show26(st.p === 1 ? color(n) : color(0) || ROSA, 1, s);                    /* 1: cambia de color por tiempo */
     } },
     8: { nombre: 'Vela', f: function (t) {
       /* cada teléfono titila distinto, como una vela; el patrón es cuánto se mueve la llama */
@@ -121,16 +146,14 @@
   function frame() {
     requestAnimationFrame(frame);
     var tf = performance.now();
-    /* media resolución: para colores planos alcanza y se dibujan 4 veces menos píxeles */
-    var w = Math.ceil(innerWidth / 2), h = Math.ceil(innerHeight / 2);
-    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    if (CSS) { ctx.clearRect(0, 0, cv.width, cv.height); }
+    if (st.e !== 7) { show26(null); }
     SCENES[st.e].f(performance.now() - t0);
+    present();
     if (DIAG) {
       var dt = performance.now() - tf; diag.frames++; diag.drawMs += dt; diag.maxMs = Math.max(diag.maxMs, dt);
       if (tf - diag.t >= 1000) {
         $('diag').textContent = Math.round(diag.frames * 1000 / (tf - diag.t)) + ' fps · cuadro ' + (diag.drawMs / diag.frames).toFixed(1) + ' ms (máx ' + diag.maxMs.toFixed(1) + ')' +
-          ' · audio ' + diag.blocks + ' bloques/s, decodificar ' + diag.decMs.toFixed(2) + ' ms · ' + (actx ? actx.sampleRate + ' Hz' : '') + ' · ' + diag.path + ' · ' + (CSS ? 'css' : 'lienzo') +
+          ' · audio ' + diag.blocks + ' bloques/s, decodificar ' + diag.decMs.toFixed(2) + ' ms · ' + (actx ? actx.sampleRate + ' Hz' : '') + ' · ' + diag.path + ' · ' + RENDER + ' · ' + (navigator.userAgent.indexOf('Firefox') > -1 ? 'Firefox' : 'Chrome/otro') +
           ' · ' + innerWidth + '×' + innerHeight + ' @' + devicePixelRatio;
         diag.frames = 0; diag.drawMs = 0; diag.maxMs = 0; diag.t = tf;
       }
@@ -151,7 +174,7 @@
        así el navegador convierte el micrófono a 48 kHz antes de pasárselo */
     var AC = window.AudioContext || window.webkitAudioContext;
     try { actx = new AC({ sampleRate: 48000 }); } catch (e) { actx = new AC(); }
-    worker = new Worker('decodificador.js?v=2');
+    worker = new Worker('decodificador.js?v=3');
     worker.onmessage = function (e) {
       if (e.data.cmd) { onCommand(e.data.cmd); }
       if (e.data.diag) { diag.blocks = e.data.diag.blocks; diag.decMs = e.data.diag.ms; }
@@ -161,7 +184,14 @@
       /* sin cancelación de eco, supresión de ruido ni ganancia automática: si no, el teléfono borra las señales */
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false
     }).then(function (stream) {
-      var src = actx.createMediaStreamSource(stream), mute = actx.createGain();
+      var src;
+      /* Firefox no deja conectar un micrófono a un contexto de audio con otra frecuencia:
+         en ese caso se usa la frecuencia del teléfono y el decodificador convierte a 48 kHz */
+      try { src = actx.createMediaStreamSource(stream); } catch (e) {
+        try { actx.close(); } catch (e2) { /* nada */ }
+        actx = new AC(); src = actx.createMediaStreamSource(stream);
+      }
+      var mute = actx.createGain();
       mute.gain.value = 0; mute.connect(actx.destination);
       if (actx.audioWorklet && window.AudioWorkletNode) {
         return actx.audioWorklet.addModule('captura.js?v=1').then(function () {
@@ -230,6 +260,6 @@
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(function () {}); }
 
   if (DIAG) { $('diag').hidden = false; }
-  if (CSS) { cv.style.background = 'transparent'; }
+  if (CSS) { cv.style.display = 'none'; }
   frame();
 })();

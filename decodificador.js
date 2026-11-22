@@ -16,15 +16,31 @@ function block(f) {
   if (nBlocks >= 47) { postMessage({ diag: { blocks: nBlocks, ms: msDec / nBlocks } }); nBlocks = 0; msDec = 0; }
 }
 
-function feed(f) { if (gg) { block(f); } else if (queue.length < 200) { queue.push(f); } }
+/* Si el micrófono no viene a 48 kHz (Firefox no deja forzarlo), se convierte acá: ggwave decodifica mal a otra
+   frecuencia, y probado en Node, convertir con interpolación lineal a 48 kHz recupera todos los comandos. */
+var inRate = 48000, pos = 0, prev = 0, acc = new Float32Array(1024), nAcc = 0;
+function resample(f) {
+  if (inRate === 48000) { return [f]; }
+  var step = inRate / 48000, outBlocks = [];
+  while (pos < f.length) {
+    var i = Math.floor(pos), t = pos - i, a = i === 0 ? prev : f[i - 1], b = f[i];
+    acc[nAcc++] = a + (b - a) * t;
+    if (nAcc === 1024) { outBlocks.push(acc); acc = new Float32Array(1024); nAcc = 0; }
+    pos += step;
+  }
+  pos -= f.length; prev = f[f.length - 1];
+  return outBlocks;
+}
+function feed(f) { resample(f).forEach(function (blk) { if (gg) { block(blk); } else if (queue.length < 200) { queue.push(blk); } }); }
 
 onmessage = function (e) {
   var d = e.data;
   if (d.init) {
+    inRate = d.rate || 48000;
     ggwave_factory().then(function (g) {
       gg = g; gg.disableLog();
       ['AUDIBLE_FAST', 'AUDIBLE_FASTEST', 'ULTRASOUND_FAST', 'ULTRASOUND_FASTEST', 'DT_NORMAL', 'DT_FAST', 'DT_FASTEST'].forEach(function (n) { gg.rxToggleProtocol(gg.ProtocolId['GGWAVE_PROTOCOL_' + n], false); });
-      var p = gg.getDefaultParameters(); p.sampleRateInp = d.rate; p.sampleRateOut = d.rate;
+      var p = gg.getDefaultParameters(); p.sampleRateInp = 48000; p.sampleRateOut = 48000;
       inst = gg.init(p);
       queue.splice(0).forEach(block);
       postMessage({ ready: true });
