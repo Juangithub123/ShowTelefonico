@@ -136,9 +136,10 @@
     } }
   };
 
-  function apply(next) {
+  /* at: momento (reloj de performance.now) en que arranca la escena; puede haber sido hace unos milisegundos */
+  function apply(next, at) {
     if (!SCENES[next.e]) { return; }
-    st = next; t0 = performance.now();
+    st = next; t0 = at === undefined ? performance.now() : at;
     $('stxt').textContent = SCENES[st.e].nombre + ' · ' + st.bpm + ' BPM';
     showStatus();
   }
@@ -154,7 +155,8 @@
       if (tf - diag.t >= 1000) {
         $('diag').textContent = Math.round(diag.frames * 1000 / (tf - diag.t)) + ' fps · cuadro ' + (diag.drawMs / diag.frames).toFixed(1) + ' ms (máx ' + diag.maxMs.toFixed(1) + ')' +
           ' · audio ' + diag.blocks + ' bloques/s, decodificar ' + diag.decMs.toFixed(2) + ' ms · ' + (actx ? actx.sampleRate + ' Hz' : '') + ' · ' + diag.path + ' · ' + RENDER + ' · ' + (navigator.userAgent.indexOf('Firefox') > -1 ? 'Firefox' : 'Chrome/otro') +
-          ' · ' + innerWidth + '×' + innerHeight + ' @' + devicePixelRatio;
+          ' · ' + innerWidth + '×' + innerHeight + ' @' + devicePixelRatio +
+          ' · latencia entrada ' + Math.round(inLat * 1000) + ' ms, salida ' + Math.round(outLat() * 1000) + ' ms · sincro: ' + sync.last;
         diag.frames = 0; diag.drawMs = 0; diag.maxMs = 0; diag.t = tf;
       }
     }
@@ -168,15 +170,50 @@
   /* El audio no pasa por el hilo de la pantalla: un AudioWorklet lo junta en el hilo de audio y lo manda
      directo a un Web Worker que corre ggwave. Si el navegador no tiene AudioWorklet, se usa el método viejo,
      pero igual la decodificación queda en el Worker. */
-  var actx, worker;
+  var actx, worker, inLat = 0;
+
+  /* ---------- Sincronía ----------
+     El comando dice QUÉ hacer; el tic que suena 0,2 s después dice CUÁNDO. Las dos horas vienen del reloj del audio
+     (la muestra exacta) y se pasan al reloj de la pantalla descontando la demora de entrada y de salida de audio
+     que informa el navegador, así todos los teléfonos marcan el momento en que el sonido llegó a su micrófono.
+     Medido en simulación (con música encima): el tic llega entre 340 y 485 ms después del bloque donde se decodifica
+     el comando (casi siempre 430-460) y su llegada se mide con un error menor a 1 ms (contra ~25 ms usando solo el comando).
+     Se buscan candidatos en una ventana alrededor de lo esperado y se queda el más fuerte (un platillo puede colarse). */
+  var TIC_AFTER = 448, WIN_BEFORE = 120, WIN_AFTER = 50, sync = { pending: null, timer: 0, last: '—' };
+  function outLat() { return actx ? (actx.outputLatency || actx.baseLatency || 0) : 0; }
+  /* hora del audio (segundos) → reloj de la pantalla (ms), en el momento en que ese sonido entró al micrófono */
+  function audioToPerf(t) {
+    var ts = actx.getOutputTimestamp ? actx.getOutputTimestamp() : null, lat = (outLat() + inLat) * 1000;
+    if (ts && ts.performanceTime) { return ts.performanceTime + (t - ts.contextTime) * 1000 - lat; }
+    return performance.now() - (actx.currentTime - t) * 1000 - lat;
+  }
+  function onSync(state, tAudio) {
+    var expect = tAudio === undefined ? performance.now() + TIC_AFTER : audioToPerf(tAudio) + TIC_AFTER;
+    clearTimeout(sync.timer);
+    sync.pending = { state: state, expect: expect, best: null };
+    /* al cerrar la ventana: el tic más fuerte, o si no apareció (mucha música encima), la hora esperada */
+    sync.timer = setTimeout(function () {
+      var pd = sync.pending; if (!pd) { return; }
+      sync.pending = null;
+      if (pd.best) { apply(pd.state, pd.best.at); var d = pd.best.at - pd.expect; sync.last = 'tic ' + (d >= 0 ? '+' : '') + d.toFixed(0) + ' ms'; }
+      else { apply(pd.state, pd.expect); sync.last = 'sin tic (por comando)'; }
+    }, Math.max(0, expect + WIN_AFTER + 10 - performance.now()));
+  }
+  function onTic(tAudio, strength) {
+    var pd = sync.pending; if (!pd) { return; }
+    var at = audioToPerf(tAudio), d = at - pd.expect;
+    if (d < -WIN_BEFORE || d > WIN_AFTER) { return; } /* fuera de la ventana es la música, no el nuestro */
+    if (!pd.best || strength > pd.best.p) { pd.best = { at: at, p: strength }; }
+  }
+
   function listen() {
     /* a 48 kHz: ggwave decodifica mal si le llega audio a otra frecuencia (medido: 0/7 audibles a 44,1 kHz);
        así el navegador convierte el micrófono a 48 kHz antes de pasárselo */
     var AC = window.AudioContext || window.webkitAudioContext;
     try { actx = new AC({ sampleRate: 48000 }); } catch (e) { actx = new AC(); }
-    worker = new Worker('decodificador.js?v=3');
+    worker = new Worker('decodificador.js?v=4');
     worker.onmessage = function (e) {
-      if (e.data.cmd) { onCommand(e.data.cmd); }
+      if (e.data.cmd) { onCommand(e.data.cmd, e.data.t); }
       if (e.data.diag) { diag.blocks = e.data.diag.blocks; diag.decMs = e.data.diag.ms; }
       if (e.data.lv !== undefined) { $('dot').style.setProperty('--lv', String(1 + Math.min(1, e.data.lv * 4))); }
     };
@@ -184,7 +221,8 @@
       /* sin cancelación de eco, supresión de ruido ni ganancia automática: si no, el teléfono borra las señales */
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false
     }).then(function (stream) {
-      var src;
+      var src, tr = stream.getAudioTracks()[0], set = tr && tr.getSettings ? tr.getSettings() : {};
+      inLat = typeof set.latency === 'number' ? set.latency : 0; /* demora de entrada que informa el navegador (Chrome) */
       /* Firefox no deja conectar un micrófono a un contexto de audio con otra frecuencia:
          en ese caso se usa la frecuencia del teléfono y el decodificador convierte a 48 kHz */
       try { src = actx.createMediaStreamSource(stream); } catch (e) {
@@ -194,9 +232,10 @@
       var mute = actx.createGain();
       mute.gain.value = 0; mute.connect(actx.destination);
       if (actx.audioWorklet && window.AudioWorkletNode) {
-        return actx.audioWorklet.addModule('captura.js?v=1').then(function () {
+        return actx.audioWorklet.addModule('captura.js?v=3').then(function () {
           var node = new AudioWorkletNode(actx, 'captura'), ch = new MessageChannel();
           node.port.postMessage({ port: ch.port1 }, [ch.port1]);
+          node.port.onmessage = function (m) { if (m.data.tic !== undefined) { onTic(m.data.t, m.data.p); } };
           worker.postMessage({ init: true, rate: actx.sampleRate, port: ch.port2 }, [ch.port2]);
           src.connect(node); node.connect(mute); diag.path = 'worklet';
           if (actx.state === 'suspended') { actx.resume(); }
@@ -204,17 +243,17 @@
       }
       var proc = actx.createScriptProcessor(1024, 1, 1);
       worker.postMessage({ init: true, rate: actx.sampleRate });
-      proc.onaudioprocess = function (e) { var f = new Float32Array(e.inputBuffer.getChannelData(0)); worker.postMessage({ audio: f }, [f.buffer]); };
+      proc.onaudioprocess = function (e) { var f = new Float32Array(e.inputBuffer.getChannelData(0)); worker.postMessage({ audio: f, t: e.playbackTime || actx.currentTime }, [f.buffer]); };
       src.connect(proc); proc.connect(mute); diag.path = 'script';
       if (actx.state === 'suspended') { actx.resume(); }
     });
   }
 
-  function onCommand(cmd) {
+  function onCommand(cmd, tAudio) {
     cmd = cmd.trim().toLowerCase();
     var m = /^([1-9])([0-9a-z])([0-9])([0-9])([0-9])$/.exec(cmd);
-    if (m) { apply({ e: +m[1], bpm: 60 + 4 * parseInt(m[2], 36), c: +m[3], p: +m[4], i: +m[5] }); return; }
-    var old = /^e(\d)$/.exec(cmd); /* comandos viejos */
+    if (m) { onSync({ e: +m[1], bpm: 60 + 4 * parseInt(m[2], 36), c: +m[3], p: +m[4], i: +m[5] }, tAudio); return; }
+    var old = /^e(\d)$/.exec(cmd); /* comandos viejos (sin tic) */
     if (old) { apply({ e: +old[1], bpm: 120, c: 0, p: 0, i: 9 }); }
   }
 

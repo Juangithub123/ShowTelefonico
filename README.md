@@ -16,7 +16,7 @@ Show de luces en los teléfonos del público, sin app y sin red durante el show.
 | `wav/audible/`, `wav/ultrasonido/` | Cada escena con los valores por defecto como WAV (48 kHz, mono), para Arena o TouchDesigner |
 | `comandos.json` | La lista de escenas y sus comandos |
 | `tools/generar-wav.js` | Regenera los WAV y comprueba que cada uno se decodifique (`node tools/generar-wav.js`) |
-| `captura.js`, `decodificador.js` | El micrófono se junta en el hilo de audio (AudioWorklet) y se decodifica en un Web Worker, así la pantalla no se traba |
+| `captura.js`, `decodificador.js` | El micrófono se junta en el hilo de audio (AudioWorklet), que además detecta el tic de sincronía, y se decodifica en un Web Worker, así la pantalla no se traba |
 | `vendor/ggwave.js` | ggwave 0.4.0 (licencia MIT), en un solo archivo |
 | `sw.js` | Guarda la página para usarla sin señal. Al cambiar archivos, subir `VERSION` |
 
@@ -51,9 +51,20 @@ El emisor arma el comando con botones y deslizadores. Tiene tap tempo y atajos d
 ## Cosas medidas
 
 - **Protocolos:** se usan los NORMAL de ggwave. Los FAST y FASTEST fallaron seguido aun sin ruido (1 a 6 aciertos de 20, contra 20 de 20).
-- **Duración:** cada comando de 5 caracteres dura ~1,45 s y el cambio ocurre cuando termina el sonido. Para que caiga en un golpe de la música, hay que dispararlo ~1,45 s antes.
+- **Duración:** cada comando de 5 caracteres dura ~1,45 s, más 0,2 s hasta el tic. El cambio cae en el tic, así que hay que dispararlo ~1,7 s antes del golpe.
 - **Frecuencia de muestreo:** la página trabaja a 48 kHz, porque ggwave decodifica mal el audio a 44,1 kHz (0 de 7 comandos audibles). Con eso, en la prueba con micrófono simulado llegaron 7 de 7, audibles y ultrasónicos.
 - **Ultrasonido:** usa la banda de ~15 a 19 kHz. Muchas PA y micrófonos de teléfono pierden respuesta ahí: hay que probarlo con el equipo real.
+
+## Sincronía entre teléfonos
+
+Cada comando termina con un **tic**: 0,2 s después de los datos suena un pulso de 30 ms, a 17.500 Hz en ultrasonido o a 9.000 Hz en audible. El comando dice *qué* hacer y el tic dice *cuándo*. Para que el golpe de luz caiga en un golpe de la música, el tic tiene que coincidir con ese golpe.
+
+- El AudioWorklet busca el tic con filtros de Goertzel cada ~1,3 ms y lo ubica con la hora exacta del audio. En simulación, con música encima, se detectó 120 de 120 veces, con un error menor a 1 ms. Usando solo el comando, la dispersión era de unos 25 ms entre teléfonos, y hasta 110 ms cuando el comando se detecta un bloque tarde.
+- La hora del audio se pasa al reloj de la pantalla descontando la demora de entrada (`track.getSettings().latency`, en Chrome) y de salida (`outputLatency`) que informa el navegador.
+- Si el tic no aparece en la ventana esperada (de 120 ms antes a 50 ms después de lo previsto), se usa la hora calculada a partir del comando.
+- Con `?diag` se ve cómo se sincronizó cada comando (`tic ±X ms`) y las demoras de entrada y salida.
+
+Lo que no se puede corregir del todo: si un modelo de teléfono tiene más demora de micrófono que otro y el navegador no la informa (por ejemplo Firefox), queda esa diferencia, normalmente de unas decenas de ms.
 
 ## Plan B
 

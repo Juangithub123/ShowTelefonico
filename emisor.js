@@ -72,7 +72,16 @@
   function wave() {
     var proto = mode === 'audible' ? gg.ProtocolId.GGWAVE_PROTOCOL_AUDIBLE_NORMAL : gg.ProtocolId.GGWAVE_PROTOCOL_ULTRASOUND_NORMAL;
     var raw = gg.encode(inst, code(), proto, +$('vol').value);
-    return new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
+    var f = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
+    return withTic(f, mode === 'audible' ? 9000 : 17500, actx.sampleRate);
+  }
+  /* tic de sincronía: 200 ms después del comando, un pulso de 30 ms. El golpe de luz cae en el tic. */
+  function withTic(f, freq, rate) {
+    var peak = 0, i; for (i = 0; i < f.length; i++) { peak = Math.max(peak, Math.abs(f[i])); }
+    var gap = Math.round(0.2 * rate), n = Math.round(0.03 * rate), att = Math.round(0.001 * rate), rel = Math.round(0.005 * rate);
+    var out = new Float32Array(f.length + gap + n + Math.round(0.05 * rate)); out.set(f);
+    for (i = 0; i < n; i++) { out[f.length + gap + i] = peak * 0.9 * Math.min(1, i / att, (n - i) / rel) * Math.sin(2 * Math.PI * freq * i / rate); }
+    return out;
   }
   function send() {
     ready().then(function () {

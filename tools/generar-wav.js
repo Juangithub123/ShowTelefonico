@@ -14,6 +14,21 @@ function wav(float32, rate) {
   return buf;
 }
 
+/* Tic de sincronía: 200 ms después del comando, un pulso de 30 ms (ataque de 1 ms) a una frecuencia fija.
+   Cada teléfono mide cuándo le llega con precisión de 1-2 ms: el comando dice qué hacer y el tic, cuándo.
+   Tiene que coincidir con captura.js (TICS) y emisor.js. */
+const TIC = { ultrasonido: 17500, audible: 9000 }, TIC_GAP = 0.2, TIC_LEN = 0.03;
+function withTic(f, freq) {
+  let peak = 0; for (let i = 0; i < f.length; i++) { peak = Math.max(peak, Math.abs(f[i])); }
+  const gap = Math.round(TIC_GAP * RATE), n = Math.round(TIC_LEN * RATE), att = Math.round(0.001 * RATE), rel = Math.round(0.005 * RATE);
+  const out = new Float32Array(f.length + gap + n + Math.round(0.05 * RATE)); out.set(f);
+  for (let i = 0; i < n; i++) {
+    const env = Math.min(1, i / att, (n - i) / rel);
+    out[f.length + gap + i] = peak * 0.9 * env * Math.sin(2 * Math.PI * freq * i / RATE);
+  }
+  return out;
+}
+
 function check(gg, f, cmd) {
   const p = gg.getDefaultParameters(); p.sampleRateInp = RATE; p.sampleRateOut = RATE;
   const rx = gg.init(p), pad = new Float32Array(Math.round(RATE * 0.4)), tail = new Float32Array(RATE);
@@ -47,8 +62,8 @@ factory().then(function (gg) {
       /* comprobación: se decodifica como llegaría a un micrófono (en trozos, con silencio antes y después) */
       const ok = check(gg, f, e.cmd);
       const name = e.n + '-' + e.id + '.wav';
-      fs.writeFileSync(path.join(__dirname, '..', 'wav', modo, name), wav(f, RATE));
-      log(modo.padEnd(12), name.padEnd(22), e.cmd, (f.length / RATE).toFixed(2) + ' s', ok ? 'ok' : 'NO DECODIFICA');
+      fs.writeFileSync(path.join(__dirname, '..', 'wav', modo, name), wav(withTic(f, TIC[modo]), RATE));
+      log(modo.padEnd(12), name.padEnd(22), e.cmd, (f.length / RATE).toFixed(2) + ' s + tic', ok ? 'ok' : 'NO DECODIFICA');
     });
   });
 });
